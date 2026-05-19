@@ -5,24 +5,74 @@
 #include <string.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 #define PROGRESS_BAR_WIDTH 30
+#define VERSION "0.2.0"
+#define MAX_FILTERS 64
 
-bool should_include_mountpoint(const char *mountpoint, char *include_filters[], int include_count, char *exclude_filters[], int exclude_count, char *type_include_filters[], int type_include_count, char *type_exclude_filters[], int type_exclude_count, const char* filesystem_type, bool has_cli_args);
+/* ── Forward declarations ── */
+static bool should_include_mountpoint(const char *mountpoint,
+    char *include_filters[], int include_count,
+    char *exclude_filters[], int exclude_count,
+    char *type_include_filters[], int type_include_count,
+    char *type_exclude_filters[], int type_exclude_count,
+    const char *filesystem_type, bool has_cli_args);
 
+static void print_usage(const char *prog);
+static void print_version(void);
+static int is_virtual_fs(const char *type);
+
+/* ── Help text ── */
+static void print_usage(const char *prog) {
+    printf("Usage: %s [OPTIONS]\n\n", prog);
+    printf("Display disk usage for mounted filesystems.\n\n");
+    printf("Options:\n");
+    printf("  --include <path>        Only show mount points containing <path>\n");
+    printf("  --exclude <path>        Exclude mount points containing <path>\n");
+    printf("  --type-include <type>   Only show filesystems of <type> (e.g. ext4, xfs)\n");
+    printf("  --type-exclude <type>   Exclude filesystems of <type>\n");
+    printf("  --tmux                  Compact single-line output for tmux status bar\n");
+    printf("  --json                  Output in JSON format (machine-readable)\n");
+    printf("  --help                  Show this help message\n");
+    printf("  --version               Show version\n\n");
+    printf("Examples:\n");
+    printf("  %s\n", prog);
+    printf("  %s --tmux\n", prog);
+    printf("  %s --include /home --type-include ext4\n", prog);
+    printf("  %s --type-exclude tmpfs\n", prog);
+    printf("\nTmux integration:\n");
+    printf("  Add to ~/.tmux.conf:\n");
+    printf("    set -g status-right \"#(%s --tmux) %%H:%%M\"\n", prog);
+}
+
+static void print_version(void) {
+    printf("showmydisk version %s\n", VERSION);
+}
+
+static int is_virtual_fs(const char *type) {
+    return strcmp(type, "proc") == 0 ||
+           strcmp(type, "sysfs") == 0 ||
+           strcmp(type, "devtmpfs") == 0 ||
+           strcmp(type, "devpts") == 0 ||
+           strcmp(type, "cgroup") == 0 ||
+           strcmp(type, "cgroup2") == 0;
+}
+
+/* ── Main ── */
 int main(int argc, char *argv[]) {
     FILE *fp;
     struct mntent *mnt;
     struct statvfs vfs;
     double usage;
-    int used_blocks, unused_blocks;
+    int used_blocks;
     char *progress_bar;
     long long total_size_kb;
 
-    char *include_filters[10];
-    char *exclude_filters[10];
-    char *type_include_filters[10];
-    char *type_exclude_filters[10];
+    char *include_filters[MAX_FILTERS];
+    char *exclude_filters[MAX_FILTERS];
+    char *type_include_filters[MAX_FILTERS];
+    char *type_exclude_filters[MAX_FILTERS];
 
     int include_count = 0;
     int exclude_count = 0;
@@ -30,83 +80,74 @@ int main(int argc, char *argv[]) {
     int type_exclude_count = 0;
     int i;
 
-    bool has_cli_args = false; // 用于跟踪是否提供了任何命令行参数
-    bool show_usage = false; // 用于标记是否需要显示 usage 信息
+    bool has_cli_args = false;
+    bool show_usage    = false;
+    bool tmux_mode     = false;
+    bool json_mode     = false;
+    int exit_code      = 0;
 
-    // 初始化过滤器数组
-    for (i = 0; i < 10; i++) {
-        include_filters[i] = NULL;
-        exclude_filters[i] = NULL;
-        type_include_filters[i] = NULL;
-        type_exclude_filters[i] = NULL;
-    }
+    /* Initialize filter arrays */
+    memset(include_filters, 0, sizeof(include_filters));
+    memset(exclude_filters, 0, sizeof(exclude_filters));
+    memset(type_include_filters, 0, sizeof(type_include_filters));
+    memset(type_exclude_filters, 0, sizeof(type_exclude_filters));
 
-    // 解析命令行参数
+    /* Parse command-line arguments */
     for (i = 1; i < argc; i++) {
-        has_cli_args = true; // 设置为 true，因为提供了至少一个参数
+        has_cli_args = true;
 
         if (strcmp(argv[i], "--include") == 0 && i + 1 < argc) {
-            if (include_count < 10) {
-                include_filters[include_count] = argv[i + 1];
-                include_count++;
-                i++;
-            } else {
-                fprintf(stderr, "Warning: Too many include filters.  Ignoring additional ones.\n");
-                i++;
+            if (include_count < MAX_FILTERS) {
+                include_filters[include_count++] = argv[++i];
             }
         } else if (strcmp(argv[i], "--exclude") == 0 && i + 1 < argc) {
-            if (exclude_count < 10) {
-                exclude_filters[exclude_count] = argv[i + 1];
-                exclude_count++;
-                i++;
-            } else {
-                fprintf(stderr, "Warning: Too many exclude filters. Ignoring additional ones.\n");
-                i++;
+            if (exclude_count < MAX_FILTERS) {
+                exclude_filters[exclude_count++] = argv[++i];
             }
         } else if (strcmp(argv[i], "--type-include") == 0 && i + 1 < argc) {
-            if (type_include_count < 10) {
-                type_include_filters[type_include_count] = argv[i + 1];
-                type_include_count++;
-                i++;
-            } else {
-                fprintf(stderr, "Warning: Too many type-include filters.  Ignoring additional ones.\n");
-                i++;
+            if (type_include_count < MAX_FILTERS) {
+                type_include_filters[type_include_count++] = argv[++i];
             }
         } else if (strcmp(argv[i], "--type-exclude") == 0 && i + 1 < argc) {
-            if (type_exclude_count < 10) {
-                type_exclude_filters[type_exclude_count] = argv[i + 1];
-                type_exclude_count++;
-                i++;
-            } else {
-                fprintf(stderr, "Warning: Too many type-exclude filters. Ignoring additional ones.\n");
-                i++;
+            if (type_exclude_count < MAX_FILTERS) {
+                type_exclude_filters[type_exclude_count++] = argv[++i];
             }
+        } else if (strcmp(argv[i], "--tmux") == 0) {
+            tmux_mode = true;
+        } else if (strcmp(argv[i], "--json") == 0) {
+            json_mode = true;
         } else if (strcmp(argv[i], "--help") == 0) {
-            show_usage = true; // 显示 usage
-            break; // 停止解析参数
-        } else {
-            fprintf(stderr, "Error: Invalid argument '%s'\n", argv[i]); // 错误信息
             show_usage = true;
-            break; // 停止解析参数
+            exit_code  = 0;
+            break;
+        } else if (strcmp(argv[i], "--version") == 0) {
+            print_version();
+            return 0;
+        } else {
+            fprintf(stderr, "Error: Invalid argument '%s'\n\n", argv[i]);
+            show_usage = true;
+            exit_code  = 1;
+            break;
         }
     }
 
-    // 显示 usage 信息
     if (show_usage) {
-        fprintf(stderr, "Usage: %s [--include <path>]... [--exclude <path>]... [--type-include <type>]... [--type-exclude <type>]...\n", argv[0]);
-        return show_usage ? 1 : 0; // 如果因为--help而显示，返回0, 错误返回1
+        print_usage(argv[0]);
+        return exit_code;
     }
 
-    // 如果没有提供命令行参数，则设置默认值
+    /* If no args, default to monitoring /home on ext4/ext3 */
     if (!has_cli_args) {
-        printf("Running with default settings: monitoring /home (ext4, ext3)\n\n");
-
         include_filters[0] = "/home";
         include_count = 1;
-
         type_include_filters[0] = "ext4";
         type_include_filters[1] = "ext3";
         type_include_count = 2;
+    }
+
+    /* ── JSON preamble ── */
+    if (json_mode) {
+        printf("[\n");
     }
 
     fp = setmntent("/etc/mtab", "r");
@@ -115,85 +156,116 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    bool first_entry = true;
+    bool any_output  = false;
+
     while ((mnt = getmntent(fp)) != NULL) {
-        if (mnt == NULL || mnt->mnt_dir == NULL || mnt->mnt_type == NULL) {
-            fprintf(stderr, "Warning: Invalid mount entry, skipping\n");
+        if (mnt == NULL || mnt->mnt_dir == NULL || mnt->mnt_type == NULL)
+            continue;
+
+        if (is_virtual_fs(mnt->mnt_type))
+            continue;
+
+        /* Apply filters */
+        if (!should_include_mountpoint(mnt->mnt_dir,
+                include_filters, include_count,
+                exclude_filters, exclude_count,
+                type_include_filters, type_include_count,
+                type_exclude_filters, type_exclude_count,
+                mnt->mnt_type, has_cli_args))
+            continue;
+
+        if (statvfs(mnt->mnt_dir, &vfs) != 0) {
+            fprintf(stderr, "Warning: statvfs failed for %s: %s\n", mnt->mnt_dir, strerror(errno));
             continue;
         }
 
-        //跳过一些虚拟文件系统
-        if (strcmp(mnt->mnt_type, "proc") == 0 || strcmp(mnt->mnt_type, "sysfs") == 0 || strcmp(mnt->mnt_type, "devtmpfs") == 0 || strcmp(mnt->mnt_type, "devpts") == 0) {
+        if (vfs.f_blocks == 0) {
+            fprintf(stderr, "Warning: zero-block filesystem, skipping %s\n", mnt->mnt_dir);
             continue;
         }
 
+        usage = (double)(vfs.f_blocks - vfs.f_bfree) / vfs.f_blocks * 100.0;
+        total_size_kb = (long long)vfs.f_blocks * vfs.f_frsize / 1024;
 
-        // 应用过滤器
-        if (!should_include_mountpoint(mnt->mnt_dir, include_filters, include_count, exclude_filters, exclude_count, type_include_filters, type_include_count, type_exclude_filters, type_exclude_count, mnt->mnt_type, has_cli_args)) {
+        /* ── Json mode ── */
+        if (json_mode) {
+            if (!first_entry) printf(",\n");
+            first_entry = false;
+            printf("  {\"mount\":\"%s\",\"type\":\"%s\",\"total_kb\":%lld,\"usage_pct\":%.1f}",
+                   mnt->mnt_dir, mnt->mnt_type, total_size_kb, usage);
+            any_output = true;
             continue;
         }
 
-        if (statvfs(mnt->mnt_dir, &vfs) == 0) {
-            if (vfs.f_blocks == 0) {
-                fprintf(stderr, "Warning: filesystem has zero blocks, skipping %s\n", mnt->mnt_dir);
-                continue;
-            }
-
-            usage = (double)(vfs.f_blocks - vfs.f_bfree) / vfs.f_blocks * 100.0;
-
-            progress_bar = (char*)malloc(PROGRESS_BAR_WIDTH + 3);
-            if (progress_bar == NULL) {
-                perror("malloc");
-                endmntent(fp);
-                return 1;
-            }
-
-            used_blocks = (int)(usage * PROGRESS_BAR_WIDTH / 100.0);
-            unused_blocks = PROGRESS_BAR_WIDTH - used_blocks;
-
-            progress_bar[0] = '[';
-            for (int j = 1; j <= used_blocks; j++) {
-                progress_bar[j] = '#';
-            }
-            for (int j = used_blocks + 1; j <= PROGRESS_BAR_WIDTH; j++) {
-                progress_bar[j] = ' ';
-            }
-            progress_bar[PROGRESS_BAR_WIDTH + 1] = ']';
-            progress_bar[PROGRESS_BAR_WIDTH + 2] = '\0';
-
-            total_size_kb = (long long)vfs.f_blocks * vfs.f_frsize / 1024;
-
-            printf("Mount Point: %s\n", mnt->mnt_dir);
-            printf("Filesystem Type: %s\n", mnt->mnt_type);
-            printf("Total Size: %lld KB\n", total_size_kb);
-            printf("Usage: %.1f%%\n", usage);
-            printf("Progress: %s\n", progress_bar);
-            printf("\n");
-
-            free(progress_bar);
-        } else {
-            perror(mnt->mnt_dir);
-            fprintf(stderr, "Error getting information for mount point: %s, errno: %d, error string: %s\n", mnt->mnt_dir, errno, strerror(errno));
+        /* ── Tmux mode ── */
+        if (tmux_mode) {
+            printf("%s:%.0f%% ", mnt->mnt_dir, usage);
+            any_output = true;
+            continue;
         }
+
+        /* ── Normal mode ── */
+        progress_bar = malloc(PROGRESS_BAR_WIDTH + 3);
+        if (progress_bar == NULL) {
+            perror("malloc");
+            endmntent(fp);
+            return 1;
+        }
+
+        used_blocks = (int)(usage * PROGRESS_BAR_WIDTH / 100.0);
+
+        progress_bar[0] = '[';
+        for (int j = 1; j <= used_blocks; j++)
+            progress_bar[j] = '#';
+        for (int j = used_blocks + 1; j <= PROGRESS_BAR_WIDTH; j++)
+            progress_bar[j] = ' ';
+        progress_bar[PROGRESS_BAR_WIDTH + 1] = ']';
+        progress_bar[PROGRESS_BAR_WIDTH + 2] = '\0';
+
+        printf("Mount Point:       %s\n", mnt->mnt_dir);
+        printf("Filesystem Type:   %s\n", mnt->mnt_type);
+        printf("Total Size:        %lld KB\n", total_size_kb);
+        printf("Usage:             %.1f%%\n", usage);
+        printf("Progress:          %s\n", progress_bar);
+        printf("\n");
+
+        free(progress_bar);
+        any_output = true;
     }
 
     endmntent(fp);
+
+    /* ── JSON postamble ── */
+    if (json_mode) {
+        if (!any_output) printf("\n");
+        printf("]\n");
+    }
+
+    /* ── Tmux: trailing newline so shell substitution doesn't eat output ── */
+    if (tmux_mode && any_output) {
+        printf("\n");
+    }
+
     return 0;
 }
 
-bool should_include_mountpoint(const char *mountpoint, char *include_filters[], int include_count, char *exclude_filters[], int exclude_count, char *type_include_filters[], int type_include_count, char *type_exclude_filters[], int type_exclude_count, const char* filesystem_type, bool has_cli_args) {
-    bool include = false;
+/* ── Filter logic ── */
+static bool should_include_mountpoint(const char *mountpoint,
+    char *include_filters[], int include_count,
+    char *exclude_filters[], int exclude_count,
+    char *type_include_filters[], int type_include_count,
+    char *type_exclude_filters[], int type_exclude_count,
+    const char *filesystem_type, bool has_cli_args)
+{
+    (void)has_cli_args;
+    bool include      = false;
     bool type_include = false;
 
-    // 处理路径 include/exclude
-    // 如果没有提供命令行参数或手动指定 include 过滤器，则应用默认的 /home 过滤器
-    if (!has_cli_args || include_count == 0) {
-        // 检查是否匹配默认的 /home 过滤器
-        if (strstr(mountpoint, "/home") != NULL) {
-            include = true;
-        } else {
-            include = false; // 不匹配 /home 则不包含
-        }
-    }  else { // 如果提供了命令行参数，则使用用户指定的过滤器
+    /* Path: if user gave --include, respect it; otherwise default to /home */
+    if (include_count == 0) {
+        include = (strstr(mountpoint, "/home") != NULL);
+    } else {
         for (int i = 0; i < include_count; i++) {
             if (strstr(mountpoint, include_filters[i]) != NULL) {
                 include = true;
@@ -202,27 +274,17 @@ bool should_include_mountpoint(const char *mountpoint, char *include_filters[], 
         }
     }
 
-
+    /* Path exclude */
     for (int i = 0; i < exclude_count; i++) {
-        if (strstr(mountpoint, exclude_filters[i]) != NULL) {
-            return false; // 排除
-        }
+        if (strstr(mountpoint, exclude_filters[i]) != NULL)
+            return false;
     }
 
-    // 处理类型 include/exclude
-    // 如果没有提供命令行参数或手动指定类型 include 过滤器，则应用默认的 ext4 和 ext3 过滤器
-      if (!has_cli_args || type_include_count == 0) {
-        // 检查是否匹配默认的 ext4 和 ext3 过滤器
-        for (int i = 0; i < 2; i++) {
-            if ( (strcmp(filesystem_type, "ext4") == 0 && i==0)||  (strcmp(filesystem_type, "ext3") == 0 && i==1)) {
-
-                type_include = true;
-                break;
-            }else{
-              type_include = false;
-            }
-        }
-    } else {// 如果提供了命令行参数，则使用用户指定的过滤器
+    /* Type: if user gave --type-include, respect it; otherwise default to ext4/ext3 */
+    if (type_include_count == 0) {
+        type_include = (strcmp(filesystem_type, "ext4") == 0 ||
+                        strcmp(filesystem_type, "ext3") == 0);
+    } else {
         for (int i = 0; i < type_include_count; i++) {
             if (strcmp(filesystem_type, type_include_filters[i]) == 0) {
                 type_include = true;
@@ -231,12 +293,11 @@ bool should_include_mountpoint(const char *mountpoint, char *include_filters[], 
         }
     }
 
-
+    /* Type exclude */
     for (int i = 0; i < type_exclude_count; i++) {
-        if (strcmp(filesystem_type, type_exclude_filters[i]) == 0) {
-            return false; // 排除
-        }
+        if (strcmp(filesystem_type, type_exclude_filters[i]) == 0)
+            return false;
     }
 
-    return include && type_include; // 只有路径和类型都满足 include 条件才返回 true
+    return include && type_include;
 }
