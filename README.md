@@ -1,126 +1,128 @@
 # showmydisk
 
-> A lightweight CLI tool to display disk usage for mounted filesystems — built for shell lovers and tmux users.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Install
+A lightweight C utility to display disk usage for mounted filesystems.
+Supports filtering, JSON output, tmux integration, and custom labels.
 
-### From source
+## Features
 
-```bash
-git clone https://github.com/touchao123/showmydisk.git
-cd showmydisk
-make
-sudo make install
-```
-
-### With Docker
-
-```bash
-docker build -t showmydisk .
-docker run --rm -v /:/host:ro showmydisk /host
-```
+- Show disk usage with progress bars
+- Filter by mount path and filesystem type
+- **Tmux integration**: device names or custom labels in status bar
+- JSON output for scripting
+- Lightweight, written in C
 
 ## Usage
 
-### Default mode — monitor `/home` on `ext4/ext3`
+```
+Usage: showmydisk [OPTIONS]
+
+Display disk usage for mounted filesystems.
+
+Options:
+  --include <path>        Only show mount points containing <path>
+  --exclude <path>        Exclude mount points containing <path>
+  --type-include <type>   Only show filesystems of <type> (e.g. ext4, xfs)
+  --type-exclude <type>   Exclude filesystems of <type>
+  --label <mount>=<name>  Assign a custom label (e.g. --label /=disk1)
+  --tmux                  Compact single-line output for tmux status bar
+  --json                  Output in JSON format (machine-readable)
+  -h, --help              Show this help message
+  --version               Show version
+```
+
+## Examples
+
+### Normal mode
 
 ```bash
-showmydisk
-```
-
-```
-Running with default settings: monitoring /home (ext4, ext3)
-
-Mount Point:       /home
+$ showmydisk
+Mount Point:       /
 Filesystem Type:   ext4
-Total Size:        102400000 KB
-Usage:             42.3%
-Progress:          [████████████░░░░░░░░░░░░░░░░░░]
+Total Size:        59356416 KB
+Usage:             12.3%
+Progress:          [####                            ]
 ```
 
-### Filter by mount path
-
-```bash
-# Only show mounts containing /home
-showmydisk --include /home
-
-# Show multiple paths
-showmydisk --include / --include /home
-
-# Exclude certain paths
-showmydisk --exclude /snap
-```
-
-### Filter by filesystem type
-
-```bash
-# Only ext4
-showmydisk --type-include ext4
-
-# Only ext4 and xfs
-showmydisk --type-include ext4 --type-include xfs
-
-# Exclude tmpfs
-showmydisk --type-exclude tmpfs
-
-# Combine path and type filters
-showmydisk --include /home --type-include xfs
-```
-
-## Tmux integration
+### Tmux integration
 
 Add to `~/.tmux.conf`:
 
 ```tmux
-# Compact disk usage in status bar
+# Show device name (e.g. mmcblk0p2:12%)
 set -g status-right "#(showmydisk --tmux) %H:%M"
+
+# Or with custom labels (recommended)
+set -g status-right "#(showmydisk --label /=root --tmux) %H:%M"
 ```
 
-Output in status bar looks like:
-
-```
-/home:42% /:67%
-```
-
-The `--tmux` flag prints a single compact line with mount point + usage percentage, perfect for tmux status bars.
-
-If you want a shorter path:
+Output examples:
 
 ```bash
-showmydisk --include /home --tmux
+# Default: shows device basename
+$ showmydisk --tmux
+mmcblk0p2:12%
+
+# Custom labels: --label <mount>=<name>
+$ showmydisk --label /=root --tmux
+root:12%
+
+# Multiple labels
+$ showmydisk --label /=disk1 --label /boot/firmware=boot --tmux
+disk1:12% boot:45%
 ```
 
-Output:
-
-```
-/home:42%
-```
-
-## Options
-
-| Flag | Description |
-|------|-------------|
-| `--include <path>` | Only show mount points containing `<path>` |
-| `--exclude <path>` | Exclude mount points containing `<path>` |
-| `--type-include <type>` | Only show filesystems of `<type>` (e.g. `ext4`, `xfs`) |
-| `--type-exclude <type>` | Exclude filesystems of `<type>` |
-| `--tmux` | Compact single-line output for tmux status bar |
-| `--json` | JSON output (machine-readable) |
-| `--help` | Show help message |
-| `--version` | Show version |
-
-## JSON output (for scripting)
+### JSON output
 
 ```bash
-showmydisk --json
-```
-
-```json
+$ showmydisk --json
 [
-  {"mount":"/home","type":"ext4","total_kb":102400000,"usage_pct":42.3},
-  {"mount":"/data","type":"xfs","total_kb":512000000,"usage_pct":67.1}
+  {"mount":"/","device":"/dev/mmcblk0p2","name":"mmcblk0p2","type":"ext4","total_kb":59356416,"usage_pct":12.3}
 ]
 ```
+
+### Filtering
+
+```bash
+# Only show /home partition
+showmydisk --include /home
+
+# Exclude tmpfs filesystems
+showmydisk --type-exclude tmpfs
+
+# Show ext4 filesystems containing /data
+showmydisk --include /data --type-include ext4
+```
+
+## Requirements
+
+- Linux (uses `/etc/mtab` for mount info)
+- C compiler (gcc/clang) for building
+- CMake (optional, for building with cmake)
+
+## Build & Install
+
+```bash
+# Build
+gcc -Wall -Wextra -O2 -o showmydisk showmydisk.c
+
+# Install
+sudo cp showmydisk /usr/local/bin/
+```
+
+Or using Makefile:
+
+```bash
+make
+sudo make install
+```
+
+## Version History
+
+- **v0.4.0** — Device names in tmux mode, `--label` support, `-h` flag, JSON field expansion
+- **v0.3.0** — Fix `-h` unsupported, fix `--tmux` empty output on non-/home mounts
+- **v0.2.0** — Initial release with tmux/json/filter support
 
 ## License
 
