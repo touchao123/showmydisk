@@ -24,7 +24,8 @@ static bool should_include_mountpoint(const char *mountpoint,
     char *exclude_filters[], int exclude_count,
     char *type_include_filters[], int type_include_count,
     char *type_exclude_filters[], int type_exclude_count,
-    const char *filesystem_type, bool has_cli_args);
+    const char *filesystem_type, bool has_cli_args,
+    bool bypass_type_filter);
 
 static const char *get_label(const char *mount, LabelEntry labels[], int label_count);
 static const char *strip_dev(const char *device);
@@ -189,11 +190,13 @@ int main(int argc, char *argv[]) {
         type_include_count = 2;
     }
 
-    /* tmux/json without custom filters: no path/type restrictions */
+    /* tmux/json without custom filters: show all non-virtual filesystems */
     if ((tmux_mode || json_mode) && include_count == 0 && type_include_count == 0) {
         include_filters[0] = "/";
         include_count = 1;
     }
+
+    bool bypass_type_filter = (tmux_mode || json_mode) && type_include_count == 0;
 
     /* ── JSON preamble ── */
     if (json_mode) {
@@ -222,7 +225,7 @@ int main(int argc, char *argv[]) {
                 exclude_filters, exclude_count,
                 type_include_filters, type_include_count,
                 type_exclude_filters, type_exclude_count,
-                mnt->mnt_type, has_cli_args))
+                mnt->mnt_type, has_cli_args, bypass_type_filter))
             continue;
 
         if (statvfs(mnt->mnt_dir, &vfs) != 0) {
@@ -327,7 +330,8 @@ static bool should_include_mountpoint(const char *mountpoint,
     char *exclude_filters[], int exclude_count,
     char *type_include_filters[], int type_include_count,
     char *type_exclude_filters[], int type_exclude_count,
-    const char *filesystem_type, bool has_cli_args)
+    const char *filesystem_type, bool has_cli_args,
+    bool bypass_type_filter)
 {
     (void)has_cli_args;
     bool include      = false;
@@ -352,7 +356,10 @@ static bool should_include_mountpoint(const char *mountpoint,
     }
 
     /* Type: if user gave --type-include, respect it; otherwise default to ext4/ext3 */
-    if (type_include_count == 0) {
+    if (bypass_type_filter) {
+        /* tmux/json mode: show all non-virtual filesystem types */
+        type_include = true;
+    } else if (type_include_count == 0) {
         type_include = (strcmp(filesystem_type, "ext4") == 0 ||
                         strcmp(filesystem_type, "ext3") == 0);
     } else {
