@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 #define PROGRESS_BAR_WIDTH 30
-#define VERSION "0.2.0"
+#define VERSION "0.3.0"
 #define MAX_FILTERS 64
 
 /* ── Forward declarations ── */
@@ -116,7 +116,7 @@ int main(int argc, char *argv[]) {
             tmux_mode = true;
         } else if (strcmp(argv[i], "--json") == 0) {
             json_mode = true;
-        } else if (strcmp(argv[i], "--help") == 0) {
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             show_usage = true;
             exit_code  = 0;
             break;
@@ -137,12 +137,19 @@ int main(int argc, char *argv[]) {
     }
 
     /* If no args, default to monitoring /home on ext4/ext3 */
-    if (!has_cli_args) {
+    if (!has_cli_args && !tmux_mode && !json_mode) {
         include_filters[0] = "/home";
         include_count = 1;
         type_include_filters[0] = "ext4";
         type_include_filters[1] = "ext3";
         type_include_count = 2;
+    }
+
+    /* tmux/json without custom filters: no path/type restrictions */
+    if ((tmux_mode || json_mode) && include_count == 0 && type_include_count == 0) {
+        /* Don't set any filters - will match all after virtual FS exclusion */
+        include_filters[0] = "/";
+        include_count = 1;
     }
 
     /* ── JSON preamble ── */
