@@ -10,6 +10,7 @@ Supports filtering, JSON output, tmux integration, and custom labels.
 - Show disk usage with progress bars
 - Filter by mount path and filesystem type
 - **Tmux integration**: device names or custom labels in status bar
+- **--label acts as filter**: only labeled mounts appear in output
 - JSON output for scripting
 - Lightweight, written in C
 
@@ -25,7 +26,7 @@ Options:
   --exclude <path>        Exclude mount points containing <path>
   --type-include <type>   Only show filesystems of <type> (e.g. ext4, xfs)
   --type-exclude <type>   Exclude filesystems of <type>
-  --label <mount>=<name>  Assign a custom label (e.g. --label /=disk1)
+  --label <mount>=<name>  Assign label and filter: only labeled mounts shown
   --tmux                  Compact single-line output for tmux status bar
   --json                  Output in JSON format (machine-readable)
   -h, --help              Show this help message
@@ -39,6 +40,8 @@ Options:
 ```bash
 $ showmydisk
 Mount Point:       /
+Device:            /dev/mmcblk0p2
+Display Name:      mmcblk0p2
 Filesystem Type:   ext4
 Total Size:        59356416 KB
 Usage:             12.3%
@@ -50,27 +53,27 @@ Progress:          [####                            ]
 Add to `~/.tmux.conf`:
 
 ```tmux
-# Show device name (e.g. mmcblk0p2:12%)
+# Device names (shows all non-virtual mounts)
 set -g status-right "#(showmydisk --tmux) %H:%M"
 
-# Or with custom labels (recommended)
-set -g status-right "#(showmydisk --label /=root --tmux) %H:%M"
+# With labels (only labeled mounts shown, recommended)
+set -g status-right "#(showmydisk --label /=root --label /boot/firmware=boot --tmux) %H:%M"
 ```
 
-Output examples:
+**--label also acts as a filter** — only mounts with assigned labels appear:
 
 ```bash
-# Default: shows device basename
+# Without label: all non-virtual mounts (can be noisy)
 $ showmydisk --tmux
-mmcblk0p2:12%
+tmpfs:10% mmcblk0p2:12% mmcblk0p1:15% tmpfs:8%
 
-# Custom labels: --label <mount>=<name>
+# With label: only the mounts you care about
+$ showmydisk --label /=disk1 --label /boot/firmware=boot --tmux
+disk1:12% boot:15%
+
+# Single label
 $ showmydisk --label /=root --tmux
 root:12%
-
-# Multiple labels
-$ showmydisk --label /=disk1 --label /boot/firmware=boot --tmux
-disk1:12% boot:45%
 ```
 
 ### JSON output
@@ -99,15 +102,11 @@ showmydisk --include /data --type-include ext4
 
 - Linux (uses `/etc/mtab` for mount info)
 - C compiler (gcc/clang) for building
-- CMake (optional, for building with cmake)
 
 ## Build & Install
 
 ```bash
-# Build
 gcc -Wall -Wextra -O2 -o showmydisk showmydisk.c
-
-# Install
 sudo cp showmydisk /usr/local/bin/
 ```
 
@@ -120,8 +119,10 @@ sudo make install
 
 ## Version History
 
-- **v0.4.0** — Device names in tmux mode, `--label` support, `-h` flag, JSON field expansion
-- **v0.3.0** — Fix `-h` unsupported, fix `--tmux` empty output on non-/home mounts
+- **v0.4.2** — `--label` acts as filter (only labeled mounts shown)
+- **v0.4.1** — Fix type filter bypass in tmux/json mode, fix multi-label output
+- **v0.4.0** — Device names in tmux mode, `--label` support, `-h` flag, JSON fields
+- **v0.3.0** — Fix `-h` unsupported, fix `--tmux` empty output
 - **v0.2.0** — Initial release with tmux/json/filter support
 
 ## License
