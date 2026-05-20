@@ -244,17 +244,21 @@ int main(int argc, char *argv[]) {
         /* ── Determine display name ── */
         const char *display_name = NULL;
 
-        /* 1. Check for user-defined label */
+        /* Check for user-defined label */
         if (label_count > 0) {
             display_name = get_label(mnt->mnt_dir, labels, label_count);
         }
 
-        /* 2. Fallback: device basename (strip /dev/) */
+        /* If --label was given but this mount has no label, skip it */
+        if (label_count > 0 && display_name == NULL)
+            continue;
+
+        /* Fallback: device basename (strip /dev/) */
         if (display_name == NULL && mnt->mnt_fsname != NULL) {
             display_name = strip_dev(mnt->mnt_fsname);
         }
 
-        /* 3. Last resort: mount point */
+        /* Last resort: mount point */
         if (display_name == NULL) {
             display_name = mnt->mnt_dir;
         }
