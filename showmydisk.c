@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 #define PROGRESS_BAR_WIDTH 30
-#define VERSION "0.4.0"
+#define VERSION "0.4.2"
 #define MAX_FILTERS 64
 #define MAX_LABELS 32
 
@@ -229,12 +229,12 @@ int main(int argc, char *argv[]) {
             continue;
 
         if (statvfs(mnt->mnt_dir, &vfs) != 0) {
-            fprintf(stderr, "Warning: statvfs failed for %s: %s\n", mnt->mnt_dir, strerror(errno));
+            /* silent: statvfs failed */
             continue;
         }
 
         if (vfs.f_blocks == 0) {
-            fprintf(stderr, "Warning: zero-block filesystem, skipping %s\n", mnt->mnt_dir);
+            /* silent: zero-block fs */
             continue;
         }
 
